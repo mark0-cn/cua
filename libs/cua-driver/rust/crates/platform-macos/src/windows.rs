@@ -438,6 +438,63 @@ pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
         .find(|w| w.window_id == window_id)
 }
 
+/// Fresh facts for one exact window; missing AX attributes remain unknown.
+pub fn window_properties(
+    pid: i32,
+    window_id: u32,
+) -> anyhow::Result<cua_driver_contract::WindowProperties> {
+    use crate::ax::bindings::{
+        ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
+        copy_string_attr, AXUIElementCreateApplication, AXUIElementSetMessagingTimeout,
+    };
+    use core_foundation::base::{CFRelease, CFTypeRef};
+    let row = window_info_by_id(window_id)
+        .ok_or_else(|| anyhow::anyhow!("window_id {window_id} unavailable"))?;
+    anyhow::ensure!(
+        row.pid == pid,
+        "window_id {window_id} belongs to pid {}, not {pid}",
+        row.pid
+    );
+    let frontmost = crate::apps::frontmost_pid();
+    let mut properties = cua_driver_contract::WindowProperties {
+        title: (!row.title.is_empty()).then_some(row.title),
+        bounds: Some(cua_driver_contract::WindowBounds {
+            x: row.bounds.x,
+            y: row.bounds.y,
+            width: row.bounds.width,
+            height: row.bounds.height,
+        }),
+        minimized: None,
+        focused: frontmost.filter(|front| *front != pid).map(|_| false),
+    };
+    // SAFETY: every retained AX element is released in this scope. No input or focus changes.
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if !app.is_null() {
+            AXUIElementSetMessagingTimeout(app, 0.25);
+            crate::ax::enablement::ensure_chromium_ax_enabled(pid, app);
+            if frontmost == Some(pid) {
+                if let Some(focused) = copy_element_attr(app, "AXFocusedWindow") {
+                    properties.focused = ax_get_window_id(focused).map(|id| id == window_id);
+                    CFRelease(focused as CFTypeRef);
+                }
+            }
+            for window in copy_ax_windows_including(app, pid, window_id) {
+                AXUIElementSetMessagingTimeout(window, 0.25);
+                if ax_get_window_id(window) == Some(window_id) {
+                    properties.minimized = copy_bool_attr(window, "AXMinimized");
+                    if let Some(title) = copy_string_attr(window, "AXTitle") {
+                        properties.title = Some(title);
+                    }
+                }
+                CFRelease(window as CFTypeRef);
+            }
+            CFRelease(app as CFTypeRef);
+        }
+    }
+    Ok(properties)
+}
+
 /// Whether `window_id` is on the current Space of its display. `None` when
 /// WindowServer does not know the window or Space membership is unreadable.
 pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {

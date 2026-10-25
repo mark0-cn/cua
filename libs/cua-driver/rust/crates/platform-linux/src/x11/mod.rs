@@ -50,6 +50,48 @@ pub fn active_window() -> Option<u64> {
     (id != 0).then_some(u64::from(id))
 }
 
+/// ICCCM WM_STATE is explicit minimization evidence; unmapped/off-Space is not.
+pub fn window_minimized(xid: u64) -> Option<bool> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let atom = conn.intern_atom(true, b"WM_STATE").ok()?.reply().ok()?.atom;
+    if atom == 0 {
+        return None;
+    }
+    let reply = conn
+        .get_property(false, xid, atom, atom, 0, 2)
+        .ok()?
+        .reply()
+        .ok()?;
+    match reply.value32()?.next()? {
+        1 => Some(false),
+        3 => Some(true),
+        _ => None,
+    }
+}
+
+/// Check actual keyboard-focus ancestry, including a focused child of the target.
+pub fn window_focused(xid: u64) -> Option<bool> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, screen) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen].root;
+    let mut focus = conn.get_input_focus().ok()?.reply().ok()?.focus;
+    if focus <= 1 {
+        return None;
+    }
+    for _ in 0..32 {
+        if focus == xid {
+            return Some(true);
+        }
+        let tree = conn.query_tree(focus).ok()?.reply().ok()?;
+        if tree.parent == 0 || tree.parent == root {
+            return Some(false);
+        }
+        focus = tree.parent;
+    }
+    None
+}
+
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     list_windows_inner(filter_pid).unwrap_or_default()

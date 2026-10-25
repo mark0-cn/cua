@@ -162,10 +162,6 @@ impl ToolInput for GetWindowStateInput {
                 "timeout_ms must be between {TIMEOUT_MS_MIN} and {TIMEOUT_MS_MAX} milliseconds"
             ));
         }
-        if self.include_accessibility_tree == Some(false) && self.include_screenshot == Some(false)
-        {
-            return Err("window observation requires accessibility or screenshot capture".into());
-        }
         Ok(())
     }
 }
@@ -297,10 +293,22 @@ pub struct SnapshotImage {
     pub data_base64: String,
 }
 
+/// Exact-window facts. Null means unreadable or unsupported, never false.
+/// Focus means foreground keyboard focus of this window, not application activation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct WindowProperties {
+    pub title: Option<String>,
+    pub bounds: Option<WindowBounds>,
+    pub minimized: Option<bool>,
+    pub focused: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct WindowStateOutput {
     pub pid: u32,
     pub window_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowProperties>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -400,6 +408,22 @@ impl ToolOutput for WindowStateOutput {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn metadata_only_observation_and_nullable_window_properties_match_the_contract() {
+        let input: GetWindowStateInput = serde_json::from_value(json!({
+            "pid":7,"window_id":9,"include_accessibility_tree":false,"include_screenshot":false
+        }))
+        .unwrap();
+        assert!(input.validate().is_ok());
+        let output: WindowStateOutput = serde_json::from_value(json!({
+            "pid":7,"window_id":9,"window":{"title":"report.txt","bounds":null,"minimized":null,"focused":false}
+        })).unwrap();
+        assert!(output.validate().is_ok());
+        let window = output.window.unwrap();
+        assert_eq!(window.minimized, None);
+        assert_eq!(window.focused, Some(false));
+    }
 
     #[test]
     fn native_app_success_shapes_allow_unavailable_metadata() {

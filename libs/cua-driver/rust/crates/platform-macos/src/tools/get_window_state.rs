@@ -27,7 +27,7 @@ const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_se
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
+        description: "Read exact window properties under `window` (title, bounds, minimized, focused; null means unknown). Set include_accessibility_tree:false and include_screenshot:false for properties only, with no snapshot/token changes. By default return the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
             START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
@@ -47,7 +47,7 @@ fn def() -> &'static ToolDef {
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",
-                    "description": "Default true. False skips the AX walk and returns the screenshot plus window metadata. Both this and include_screenshot false is an error."
+                    "description": "Default true. False skips the AX walk. Together with include_screenshot:false, returns only exact window properties without changing snapshot tokens."
                 },
                 "include_screenshot": {
                     "type": "boolean",
@@ -190,6 +190,30 @@ impl Tool for GetWindowStateTool {
             }
         }
 
+        let properties = match tokio::task::spawn_blocking(move || {
+            crate::windows::window_properties(pid, window_id)
+        })
+        .await
+        {
+            Ok(Ok(properties)) => properties,
+            Ok(Err(error)) => return ToolResult::error(error.to_string()),
+            Err(error) => {
+                return ToolResult::error(format!("Window property observation failed: {error}"))
+            }
+        };
+        if args
+            .get("include_accessibility_tree")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && args.get("include_screenshot").and_then(Value::as_bool) == Some(false)
+            && args.get("screenshot_out_file").is_none()
+        {
+            return ToolResult::text("Exact window properties; no tree or screenshot requested.")
+                .with_structured(
+                    serde_json::json!({"pid":pid,"window_id":window_id,"window":properties}),
+                );
+        }
+
         let view = match cua_driver_core::window_state_view::ViewOptions::from_args(&args) {
             Ok(view) => view,
             Err(refusal) => return refusal,
@@ -230,20 +254,11 @@ impl Tool for GetWindowStateTool {
         // `include_accessibility_tree` (default true) is the mirror image of
         // `include_screenshot`: set false to SKIP the AX walk (the expensive
         // part) and return just the screenshot + window metadata — the
-        // capture-only / preview path. With BOTH the tree and the screenshot
-        // opted out there is nothing to return, so refuse rather than emit an
-        // empty payload.
+        // capture-only / preview path. The metadata-only path returns above.
         let want_tree = args
             .get("include_accessibility_tree")
             .and_then(|v| v.as_bool())
             != Some(false);
-        if !want_tree && !should_capture {
-            return ToolResult::error(
-                "Nothing to return: both include_accessibility_tree:false and \
-                 include_screenshot:false. Set at least one to true, or pass \
-                 screenshot_out_file to force a capture.",
-            );
-        }
         // Optional per-call cap on the returned screenshot's long edge, folded
         // with the session/global ceiling below (the tighter wins).
         let max_dimension = args
@@ -629,6 +644,7 @@ impl Tool for GetWindowStateTool {
         let mut structured = serde_json::json!({
             "window_id": window_id,
             "pid": pid,
+            "window":properties,
             "element_count": element_count,
             "total_element_count": element_count,
             "returned_element_count": filtered_element_count,
@@ -1349,7 +1365,7 @@ mod window_scope_contract_tests {
     /// The capture-only fold-in: get_window_state advertises the new
     /// `include_accessibility_tree` / `max_dimension` controls, keeps pid +
     /// window_id required (schema not loosened), and documents the degenerate
-    /// both-false case in its description.
+    /// metadata-only case in its description.
     #[test]
     fn schema_advertises_capture_only_controls() {
         let d = def();
@@ -1376,7 +1392,7 @@ mod window_scope_contract_tests {
         assert!(
             d.description.contains("include_accessibility_tree:false")
                 && d.description.contains("include_screenshot:false"),
-            "description must document the both-false error"
+            "description must document the metadata-only flags"
         );
     }
 

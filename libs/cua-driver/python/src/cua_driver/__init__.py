@@ -105,6 +105,7 @@ from ._native_contract import (
     WindowBounds,
     WindowElement,
     WindowInfo,
+    WindowProperties,
     WindowStateOutput,
 
     ActionDelivery,
@@ -275,6 +276,7 @@ __all__ = [
     "WindowBounds",
     "WindowElement",
     "WindowInfo",
+    "WindowProperties",
     "WindowStateOutput",
 
     "ActionCompletion",

@@ -106,13 +106,27 @@ pub struct ElementSelector {
     pub label_contains: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WindowPredicate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exists: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds: Option<BoundsExpectation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "boolean_schema")]
+    pub minimized: Option<bool>,
+    /// The exact top-level window has foreground keyboard focus, not just its application.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "boolean_schema")]
+    pub focused: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonempty_string_schema")]
+    pub title_equals: Option<String>,
+    /// Case-insensitive substring, matching ElementSelector::label_contains semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonempty_string_schema")]
+    pub title_contains: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -226,6 +240,8 @@ pub fn contracts() -> Vec<ToolContract> {
     vec![ToolContract {
         name: VerifyStateInput::TOOL_NAME.into(),
         description: "Deterministically verify bounded predicates against one exact window. \
+            Window conditions include exists, bounds, minimized, focused, title_equals and title_contains. \
+            Focus is the exact window's foreground keyboard focus, not application activation. \
             The driver evaluates structured window/accessibility state and may return the final \
             screenshot as uninterpreted visual evidence for a multimodal caller. Predicate \
             results are satisfied, unsatisfied, or unknown; unknown never implies success. \

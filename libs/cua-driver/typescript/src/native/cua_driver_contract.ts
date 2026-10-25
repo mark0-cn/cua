@@ -5908,7 +5908,17 @@ const FfiConverterTypeStartSessionOutput = (() => {
 
 export type WindowPredicate = {
     exists?: boolean,
-    bounds?: BoundsExpectation
+    bounds?: BoundsExpectation,
+    minimized?: boolean,
+    /**
+     * The exact top-level window has foreground keyboard focus, not just its application.
+     */
+    focused?: boolean,
+    titleEquals?: string,
+    /**
+     * Case-insensitive substring, matching ElementSelector::label_contains semantics.
+     */
+    titleContains?: string
 }
 
 /**
@@ -5933,16 +5943,28 @@ const FfiConverterTypeWindowPredicate = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 exists: FfiConverterOptionalBoolean.read(from),
-                bounds: FfiConverterOptionalTypeBoundsExpectation.read(from)
+                bounds: FfiConverterOptionalTypeBoundsExpectation.read(from),
+                minimized: FfiConverterOptionalBoolean.read(from),
+                focused: FfiConverterOptionalBoolean.read(from),
+                titleEquals: FfiConverterOptionalString.read(from),
+                titleContains: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalBoolean.write(value.exists, into);
             FfiConverterOptionalTypeBoundsExpectation.write(value.bounds, into);
+            FfiConverterOptionalBoolean.write(value.minimized, into);
+            FfiConverterOptionalBoolean.write(value.focused, into);
+            FfiConverterOptionalString.write(value.titleEquals, into);
+            FfiConverterOptionalString.write(value.titleContains, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalBoolean.allocationSize(value.exists) +
-             FfiConverterOptionalTypeBoundsExpectation.allocationSize(value.bounds);
+             FfiConverterOptionalTypeBoundsExpectation.allocationSize(value.bounds) +
+             FfiConverterOptionalBoolean.allocationSize(value.minimized) +
+             FfiConverterOptionalBoolean.allocationSize(value.focused) +
+             FfiConverterOptionalString.allocationSize(value.titleEquals) +
+             FfiConverterOptionalString.allocationSize(value.titleContains);
 
         }
     };
@@ -6416,9 +6438,65 @@ const FfiConverterTypeWindowElement = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Exact-window facts. Null means unreadable or unsupported, never false.
+ * Focus means foreground keyboard focus of this window, not application activation.
+ */
+export type WindowProperties = {
+    title?: string,
+    bounds?: WindowBounds,
+    minimized?: boolean,
+    focused?: boolean
+}
+
+/**
+ * Generated factory for {@link WindowProperties} record objects.
+ */
+export const WindowProperties = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowProperties, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowProperties>,
+    });
+})();
+
+const FfiConverterTypeWindowProperties = (() => {
+    type TypeName = WindowProperties;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                title: FfiConverterOptionalString.read(from),
+                bounds: FfiConverterOptionalTypeWindowBounds.read(from),
+                minimized: FfiConverterOptionalBoolean.read(from),
+                focused: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.title, into);
+            FfiConverterOptionalTypeWindowBounds.write(value.bounds, into);
+            FfiConverterOptionalBoolean.write(value.minimized, into);
+            FfiConverterOptionalBoolean.write(value.focused, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.title) +
+             FfiConverterOptionalTypeWindowBounds.allocationSize(value.bounds) +
+             FfiConverterOptionalBoolean.allocationSize(value.minimized) +
+             FfiConverterOptionalBoolean.allocationSize(value.focused);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type WindowStateOutput = {
     pid: number,
     windowId: bigint,
+    window?: WindowProperties,
     snapshotId?: string,
     appName?: string,
     windowTitle?: string,
@@ -6492,6 +6570,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
             return {
                 pid: FfiConverterUInt32.read(from),
                 windowId: FfiConverterUInt64.read(from),
+                window: FfiConverterOptionalTypeWindowProperties.read(from),
                 snapshotId: FfiConverterOptionalString.read(from),
                 appName: FfiConverterOptionalString.read(from),
                 windowTitle: FfiConverterOptionalString.read(from),
@@ -6524,6 +6603,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterUInt32.write(value.pid, into);
             FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterOptionalTypeWindowProperties.write(value.window, into);
             FfiConverterOptionalString.write(value.snapshotId, into);
             FfiConverterOptionalString.write(value.appName, into);
             FfiConverterOptionalString.write(value.windowTitle, into);
@@ -6555,6 +6635,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
              FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterOptionalTypeWindowProperties.allocationSize(value.window) +
              FfiConverterOptionalString.allocationSize(value.snapshotId) +
              FfiConverterOptionalString.allocationSize(value.appName) +
              FfiConverterOptionalString.allocationSize(value.windowTitle) +
@@ -6755,14 +6836,17 @@ const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConver
 // FfiConverter for ElementFrame | undefined
 const FfiConverterOptionalTypeElementFrame = new FfiConverterOptional(FfiConverterTypeElementFrame);
 
+// FfiConverter for WindowBounds | undefined
+const FfiConverterOptionalTypeWindowBounds = new FfiConverterOptional(FfiConverterTypeWindowBounds);
+
+// FfiConverter for WindowProperties | undefined
+const FfiConverterOptionalTypeWindowProperties = new FfiConverterOptional(FfiConverterTypeWindowProperties);
+
 // FfiConverter for Array<WindowElement>
 const FfiConverterSequenceTypeWindowElement = new FfiConverterArray(FfiConverterTypeWindowElement);
 
 // FfiConverter for Array<WindowElement> | undefined
 const FfiConverterOptionalSequenceTypeWindowElement = new FfiConverterOptional(FfiConverterSequenceTypeWindowElement);
-
-// FfiConverter for WindowBounds | undefined
-const FfiConverterOptionalTypeWindowBounds = new FfiConverterOptional(FfiConverterTypeWindowBounds);
 
 // FfiConverter for Array<SnapshotImage>
 const FfiConverterSequenceTypeSnapshotImage = new FfiConverterArray(FfiConverterTypeSnapshotImage);
@@ -6902,6 +6986,7 @@ export default Object.freeze({
     FfiConverterTypeWindowElement,
     FfiConverterTypeWindowInfo,
     FfiConverterTypeWindowPredicate,
+    FfiConverterTypeWindowProperties,
     FfiConverterTypeWindowStateOutput,
   }
 });

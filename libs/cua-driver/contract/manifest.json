@@ -1980,6 +1980,58 @@
               "null"
             ]
           },
+          "window": {
+            "properties": {
+              "bounds": {
+                "properties": {
+                  "height": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "focused": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "minimized": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "window_bounds": {
             "properties": {
               "height": {
@@ -5451,7 +5503,7 @@
     },
     {
       "name": "verify_state",
-      "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
+      "description": "Deterministically verify bounded predicates against one exact window. Window conditions include exists, bounds, minimized, focused, title_equals and title_contains. Focus is the exact window's foreground keyboard focus, not application activation. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
       "platforms": [
         "macos",
         "windows",
@@ -5549,6 +5601,22 @@
                     },
                     "exists": {
                       "type": "boolean"
+                    },
+                    "focused": {
+                      "description": "The exact top-level window has foreground keyboard focus, not just its application.",
+                      "type": "boolean"
+                    },
+                    "minimized": {
+                      "type": "boolean"
+                    },
+                    "title_contains": {
+                      "description": "Case-insensitive substring, matching ElementSelector::label_contains semantics.",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "title_equals": {
+                      "minLength": 1,
+                      "type": "string"
                     }
                   },
                   "required": [],

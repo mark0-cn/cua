@@ -1086,7 +1086,7 @@ impl Tool for GetWindowStateTool {
                 window metadata (window_bounds, app_name, window_title) — the \
                 capture-only path for a live window preview / picture-in-picture. \
                 Setting BOTH `include_accessibility_tree:false` and \
-                `include_screenshot:false` is an error. Optional `max_dimension` \
+                `include_screenshot:false` returns exact window properties only. Optional `max_dimension` \
                 caps the returned screenshot's long edge in pixels for a cheap \
                 thumbnail.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk \
@@ -1123,7 +1123,7 @@ impl Tool for GetWindowStateTool {
                 "window_id":{"type":"integer","description":"Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree":{"type":"boolean",
-                    "description":"Default true — walk the AT-SPI tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
+                    "description":"Default true — walk the AT-SPI tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false returns only exact window properties without changing snapshot tokens."},
                 "include_screenshot":{"type":"boolean",
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
@@ -1322,19 +1322,35 @@ impl Tool for GetWindowStateTool {
             ));
         }
 
+        // Wayland does not universally expose focus/minimization; keep those null.
+        let properties = cua_driver_contract::WindowProperties {
+            title: window_meta.as_ref().map(|window| window.title.clone()),
+            bounds: window_meta
+                .as_ref()
+                .map(|window| cua_driver_contract::WindowBounds {
+                    x: window.x as f64,
+                    y: window.y as f64,
+                    width: window.width as f64,
+                    height: window.height as f64,
+                }),
+            minimized: (!crate::wayland::is_wayland())
+                .then(|| crate::x11::window_minimized(xid))
+                .flatten(),
+            focused: (!crate::wayland::is_wayland())
+                .then(|| crate::x11::window_focused(xid))
+                .flatten(),
+        };
+        if !want_tree && include_screenshot == Some(false) && screenshot_out_file.is_none() {
+            return ToolResult::text("Exact window properties; no tree or screenshot requested.")
+                .with_structured(json!({"pid":pid,"window_id":xid,"window":properties}));
+        }
+
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and
         // cross-checks the (sometimes-lying) tree against the frame. An explicit
         // `include_screenshot:false` skips the grab; an unproven Wayland surface
         // returns the tree with a typed screenshot error instead of unrelated pixels.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
-        if !want_tree && !should_capture {
-            return ToolResult::error(
-                "Nothing to return: both include_accessibility_tree:false and \
-                 include_screenshot:false. Set at least one to true, or pass \
-                 screenshot_out_file to force a capture.",
-            );
-        }
         // `display_only` is the public form of the internal observation-only
         // read: pixels for a preview, with no snapshot or capture change.
         let observation_only = display_only
@@ -1491,7 +1507,7 @@ impl Tool for GetWindowStateTool {
         match result {
             Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error, overlays, binds_window))) => {
                 let mut content = Vec::new();
-                let mut structured = json!({ "window_id": xid, "pid": pid });
+                let mut structured = json!({ "window_id": xid, "pid": pid, "window":properties });
                 let screenshot_scale = shot_opt.as_ref().map(|(_, _, w, _, original_w, _)| {
                     original_w.map_or(1.0, |ow| ow as f64 / *w as f64)
                 });

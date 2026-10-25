@@ -153,6 +153,28 @@ not prove either answer and must never be promoted to success.
 When `include_screenshot` is enabled, the screenshot is uninterpreted evidence.
 A multimodal harness reads it and decides whether to stop, retry, or advance.
 
+Window postconditions support `exists`, `bounds`, `minimized`, `focused`,
+`title_equals` (exact) and `title_contains` (case-insensitive). For example:
+
+```json
+{"pid":42,"window_id":73,"expect":[{"window":{"focused":true,"title_contains":"report.txt"}}],"timeout_ms":5000,"stable_samples":2}
+```
+
+All requested properties and predicates must hold together. Focus identifies the
+exact top-level window receiving foreground keyboard input, not merely its app.
+Missing/null properties and unavailable targets remain unknown, including when
+the expected boolean is false. Minimization, focus, and on-screen presence are
+different facts; off-screen or absent windows do not prove minimization.
+
+`get_window_state` returns these facts under `window`, using `WindowProperties`.
+Set both `include_accessibility_tree:false` and `include_screenshot:false` for a
+metadata-only read: no tree walk, screenshot, or snapshot/token publication.
+`list_windows` remains a lightweight discovery operation. macOS uses exact AX
+window IDs, Windows uses exact HWND ownership and foreground focus, and X11 uses
+ICCCM `WM_STATE` plus keyboard-focus ancestry. Generic Wayland backends cannot
+prove minimization/focus and return null for those fields. Maximize/fullscreen
+conditions are not included in this extension; geometry is not used to guess them.
+
 ## SDK access
 
 Rust, Python, and TypeScript keep the transport-neutral `ToolResult` envelope:

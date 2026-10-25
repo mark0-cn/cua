@@ -1237,8 +1237,8 @@ impl Tool for GetWindowStateTool {
                 UIA walk entirely and return just the screenshot plus window metadata \
                 (window_bounds, app_name, window_title) — the capture-only path for a \
                 live window preview / picture-in-picture. Setting BOTH \
-                `include_accessibility_tree:false` and `include_screenshot:false` is an \
-                error. Optional `max_image_dimension` overrides the configured screenshot \
+                `include_accessibility_tree:false` and `include_screenshot:false` returns \
+                exact window properties only. Optional `max_image_dimension` overrides the configured screenshot \
                 long-edge limit for this call; pass 0 for native resolution. Legacy \
                 `max_dimension` remains a cap on the configured limit.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
@@ -1263,7 +1263,7 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
-                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
+                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false returns only exact window properties without changing snapshot tokens."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk."},
@@ -1319,6 +1319,31 @@ impl Tool for GetWindowStateTool {
                 ));
             }
         };
+        let properties = {
+            let window = window.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::win32::windows::window_properties(&window)
+            })
+            .await
+            {
+                Ok(properties) => properties,
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Window property observation failed: {error}"
+                    ))
+                }
+            }
+        };
+        if args
+            .get("include_accessibility_tree")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && args.get("include_screenshot").and_then(Value::as_bool) == Some(false)
+            && args.get("screenshot_out_file").is_none()
+        {
+            return ToolResult::text("Exact window properties; no tree or screenshot requested.")
+                .with_structured(json!({"pid":pid,"window_id":hwnd,"window":properties}));
+        }
         // Window identity metadata (additive): title + on-screen rectangle from
         // the lookup we already did, plus the owning process's executable
         // name. Names the surface on the capture-only path, where no UIA tree
@@ -1420,13 +1445,6 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_bool())
             != Some(false);
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
-        if !do_tree && !do_shot {
-            return ToolResult::error(
-                "Nothing to return: both include_accessibility_tree:false and \
-                 include_screenshot:false. Set at least one to true, or pass \
-                 screenshot_out_file to force a capture.",
-            );
-        }
 
         let state = self.state.clone();
         let q = query.clone();
@@ -1537,7 +1555,7 @@ impl Tool for GetWindowStateTool {
         match result {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
-                let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let mut structured = json!({ "window_id": hwnd, "pid": pid, "window":properties });
                 let screenshot_scale = screenshot_opt
                     .as_ref()
                     .map(|(_, _, w, _, native_w, _, _)| *native_w as f64 / *w as f64);

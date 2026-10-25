@@ -43,6 +43,42 @@ pub struct WindowInfo {
     pub minimized: bool,
 }
 
+pub fn window_properties(window: &WindowInfo) -> cua_driver_contract::WindowProperties {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let target = HWND(window.hwnd as *mut _);
+    // SAFETY: query-only Win32 calls; ownership is checked again before returning facts.
+    unsafe {
+        let mut pid = 0;
+        if !IsWindow(target).as_bool()
+            || GetWindowThreadProcessId(target, Some(&mut pid)) == 0
+            || pid != window.pid
+        {
+            return cua_driver_contract::WindowProperties::default();
+        }
+        let foreground = GetForegroundWindow();
+        let properties = cua_driver_contract::WindowProperties {
+            title: (!window.title.is_empty()).then(|| window.title.clone()),
+            bounds: (window.width > 0 && window.height > 0).then_some(
+                cua_driver_contract::WindowBounds {
+                    x: window.x as f64,
+                    y: window.y as f64,
+                    width: window.width as f64,
+                    height: window.height as f64,
+                },
+            ),
+            minimized: Some(IsIconic(target).as_bool()),
+            focused: (!foreground.0.is_null()).then_some(foreground == target),
+        };
+        if !IsWindow(target).as_bool()
+            || GetWindowThreadProcessId(target, Some(&mut pid)) == 0
+            || pid != window.pid
+        {
+            return cua_driver_contract::WindowProperties::default();
+        }
+        properties
+    }
+}
+
 struct EnumState {
     windows: Vec<WindowInfo>,
 }

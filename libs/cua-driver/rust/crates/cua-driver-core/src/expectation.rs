@@ -52,6 +52,7 @@ pub trait ObservationProvider: Send + Sync {
         window_id: u64,
         include_elements: bool,
         include_screenshot: bool,
+        include_window_properties: bool,
     ) -> Result<ObservationSample, String>;
 }
 
@@ -81,6 +82,7 @@ impl ObservationProvider for ToolObservationProvider {
         window_id: u64,
         include_elements: bool,
         include_screenshot: bool,
+        include_window_properties: bool,
     ) -> Result<ObservationSample, String> {
         let listed = self
             .list_windows
@@ -89,7 +91,7 @@ impl ObservationProvider for ToolObservationProvider {
         if listed.is_error == Some(true) {
             return Err(tool_error_text(&listed, "list_windows failed"));
         }
-        let window = listed
+        let mut window = listed
             .structured_content
             .as_ref()
             .and_then(|value| value.get("windows"))
@@ -121,7 +123,9 @@ impl ObservationProvider for ToolObservationProvider {
             ));
         }
 
-        if window.is_none() || (!include_elements && !include_screenshot) {
+        if window.is_none()
+            || (!include_elements && !include_screenshot && !include_window_properties)
+        {
             return Ok(ObservationSample {
                 snapshot: ObservationSnapshot {
                     window,
@@ -146,6 +150,17 @@ impl ObservationProvider for ToolObservationProvider {
             return Err(tool_error_text(&state, "get_window_state failed"));
         }
         let structured = state.structured_content.as_ref();
+        if include_window_properties {
+            let properties = structured
+                .and_then(|state| state.get("window"))
+                .and_then(Value::as_object)
+                .ok_or("get_window_state omitted exact window properties")?;
+            window
+                .as_mut()
+                .and_then(Value::as_object_mut)
+                .expect("listed window object")
+                .extend(properties.clone());
+        }
         let elements = structured
             .and_then(|value| value.get("elements"))
             .and_then(Value::as_array)
@@ -279,6 +294,12 @@ impl Tool for VerifyStateTool {
             .expect
             .iter()
             .any(|predicate| predicate.element.is_some());
+        let include_window_properties = input.expect.iter().any(|predicate| {
+            predicate
+                .window
+                .as_ref()
+                .is_some_and(needs_window_properties)
+        });
         let started = tokio::time::Instant::now();
         let deadline = started + Duration::from_millis(timeout_ms);
         let mut samples = 0u64;
@@ -289,7 +310,13 @@ impl Tool for VerifyStateTool {
             samples += 1;
             let outcomes = match self
                 .provider
-                .observe(input.pid, input.window_id, include_elements, false)
+                .observe(
+                    input.pid,
+                    input.window_id,
+                    include_elements,
+                    false,
+                    include_window_properties,
+                )
                 .await
             {
                 Ok(sample) => evaluate_predicates(&input.expect, &sample.snapshot),
@@ -341,7 +368,13 @@ impl Tool for VerifyStateTool {
         if input.include_screenshot == Some(true) {
             if let Ok(evidence) = self
                 .provider
-                .observe(input.pid, input.window_id, false, true)
+                .observe(
+                    input.pid,
+                    input.window_id,
+                    false,
+                    true,
+                    include_window_properties,
+                )
                 .await
             {
                 result.content.extend(evidence.visual_evidence);
@@ -353,6 +386,18 @@ impl Tool for VerifyStateTool {
 
 fn invalid_predicate_message(expect: &[StatePredicate]) -> Option<String> {
     for (index, predicate) in expect.iter().enumerate() {
+        if let Some(window) = &predicate.window {
+            for (name, value) in [
+                ("title_equals", &window.title_equals),
+                ("title_contains", &window.title_contains),
+            ] {
+                if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+                    return Some(format!(
+                        "verify_state predicate {index} {name} must not be empty"
+                    ));
+                }
+            }
+        }
         if let Some(element) = predicate.element.as_ref() {
             if element.exists == Some(false) {
                 return Some(format!(
@@ -426,7 +471,10 @@ fn evaluate_window(
     predicate: &WindowPredicate,
     window: Option<&Value>,
 ) -> (VerificationStatus, Option<UnknownReason>, Option<Value>) {
-    if predicate.exists.is_none() && predicate.bounds.is_none() {
+    if predicate.exists.is_none()
+        && predicate.bounds.is_none()
+        && !needs_window_properties(predicate)
+    {
         return (
             VerificationStatus::Unknown,
             Some(UnknownReason::InvalidPredicate),
@@ -444,7 +492,10 @@ fn evaluate_window(
         }
     }
     let Some(window) = window else {
-        return if predicate.exists == Some(false) && predicate.bounds.is_none() {
+        return if predicate.exists == Some(false)
+            && predicate.bounds.is_none()
+            && !needs_window_properties(predicate)
+        {
             (
                 VerificationStatus::Satisfied,
                 None,
@@ -499,11 +550,56 @@ fn evaluate_window(
             );
         }
     }
-    (
-        VerificationStatus::Satisfied,
-        None,
-        Some(json!({"exists": true, "bounds": window.get("bounds")})),
-    )
+    let mut observed = json!({"exists":true,"bounds":window.get("bounds")});
+    let mut unknown = false;
+    for (name, expected) in [
+        ("minimized", predicate.minimized),
+        ("focused", predicate.focused),
+    ] {
+        if let Some(expected) = expected {
+            observed[name] = window.get(name).cloned().unwrap_or(Value::Null);
+            match observed[name].as_bool() {
+                Some(actual) if actual != expected => {
+                    return (VerificationStatus::Unsatisfied, None, Some(observed))
+                }
+                None => unknown = true,
+                _ => {}
+            }
+        }
+    }
+    if predicate.title_equals.is_some() || predicate.title_contains.is_some() {
+        observed["title"] = window.get("title").cloned().unwrap_or(Value::Null);
+        if let Some(title) = observed["title"].as_str() {
+            if predicate
+                .title_equals
+                .as_ref()
+                .is_some_and(|expected| title != expected)
+                || predicate.title_contains.as_ref().is_some_and(|expected| {
+                    !title.to_lowercase().contains(&expected.to_lowercase())
+                })
+            {
+                return (VerificationStatus::Unsatisfied, None, Some(observed));
+            }
+        } else {
+            unknown = true;
+        }
+    }
+    if unknown {
+        (
+            VerificationStatus::Unknown,
+            Some(UnknownReason::UnsupportedPredicate),
+            Some(observed),
+        )
+    } else {
+        (VerificationStatus::Satisfied, None, Some(observed))
+    }
+}
+
+fn needs_window_properties(predicate: &WindowPredicate) -> bool {
+    predicate.minimized.is_some()
+        || predicate.focused.is_some()
+        || predicate.title_equals.is_some()
+        || predicate.title_contains.is_some()
 }
 
 fn evaluate_element(
@@ -814,6 +910,116 @@ mod tests {
         })
     }
 
+    #[tokio::test]
+    async fn window_property_conditions_use_native_verification_and_preserve_unknowns() {
+        for (facts, condition, status, reason) in [
+            (
+                Some(json!({"minimized":true})),
+                json!({"minimized":true}),
+                "satisfied",
+                None,
+            ),
+            (
+                Some(json!({"focused":false})),
+                json!({"focused":true}),
+                "unsatisfied",
+                None,
+            ),
+            (
+                Some(json!({"title":"report.txt — Editor","focused":true})),
+                json!({"title_contains":"report.txt","focused":true}),
+                "satisfied",
+                None,
+            ),
+            (
+                Some(json!({"title":"other.txt"})),
+                json!({"title_equals":"report.txt"}),
+                "unsatisfied",
+                None,
+            ),
+            (
+                Some(json!({"minimized":null})),
+                json!({"minimized":false}),
+                "unknown",
+                Some("unsupported_predicate"),
+            ),
+            (
+                Some(json!({})),
+                json!({"focused":false}),
+                "unknown",
+                Some("unsupported_predicate"),
+            ),
+            (
+                None,
+                json!({"minimized":false}),
+                "unknown",
+                Some("target_missing"),
+            ),
+        ] {
+            let provider = Arc::new(FakeProvider {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                snapshot: ObservationSnapshot {
+                    window: facts,
+                    ..ObservationSnapshot::default()
+                },
+            });
+            let result = VerifyStateTool::new(provider).invoke(json!({
+                "pid":42,"window_id":7,"expect":[{"window":condition}],"timeout_ms":0,"stable_samples":1
+            })).await;
+            assert_ne!(result.is_error, Some(true));
+            let report = result.structured_content.unwrap();
+            assert_eq!(report["status"], status);
+            assert_eq!(report["stable"], status == "satisfied");
+            assert_eq!(report["predicates"][0]["unknown_reason"], json!(reason));
+            assert!(report["predicates"][0]["observed_json"].is_string());
+        }
+    }
+
+    struct ObservationTool {
+        listing: bool,
+        calls: Arc<std::sync::Mutex<Vec<Value>>>,
+    }
+
+    #[async_trait]
+    impl Tool for ObservationTool {
+        fn def(&self) -> &ToolDef {
+            def()
+        }
+        async fn invoke(&self, args: Value) -> ToolResult {
+            self.calls.lock().unwrap().push(args);
+            ToolResult::text("observation").with_structured(if self.listing {
+                json!({"windows":[{"pid":42,"window_id":7,"title":"old title"}]})
+            } else {
+                json!({"pid":42,"window_id":7,"window":{"title":"report.txt","minimized":true,"focused":false}})
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn window_properties_are_requested_without_tree_or_screenshot() {
+        let calls = Arc::new(std::sync::Mutex::new(vec![]));
+        let provider = Arc::new(ToolObservationProvider::new(
+            Arc::new(ObservationTool {
+                listing: true,
+                calls: calls.clone(),
+            }),
+            Arc::new(ObservationTool {
+                listing: false,
+                calls: calls.clone(),
+            }),
+        ));
+        let result = VerifyStateTool::new(provider).invoke(json!({
+            "pid":42,"window_id":7,"expect":[{"window":{"minimized":true,"title_equals":"report.txt"}}],
+            "timeout_ms":0,"stable_samples":1
+        })).await;
+        assert_eq!(result.structured_content.unwrap()["status"], "satisfied");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1]["include_accessibility_tree"], false);
+        assert_eq!(calls[1]["include_screenshot"], false);
+        assert_eq!(calls[1]["_observation_only"], true);
+    }
+
     fn element_predicate(label: &str) -> StatePredicate {
         StatePredicate {
             window: None,
@@ -854,6 +1060,7 @@ mod tests {
                     height: 400.0,
                     tolerance_px: Some(1.0),
                 }),
+                ..WindowPredicate::default()
             }),
             element: None,
         }];
@@ -1206,6 +1413,7 @@ mod tests {
             _window_id: u64,
             _include_elements: bool,
             include_screenshot: bool,
+            _include_window_properties: bool,
         ) -> Result<ObservationSample, String> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(ObservationSample {
@@ -1393,6 +1601,7 @@ mod tests {
             _window_id: u64,
             _include_elements: bool,
             _include_screenshot: bool,
+            _include_window_properties: bool,
         ) -> Result<ObservationSample, String> {
             let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if call == 0 {
