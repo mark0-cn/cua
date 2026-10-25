@@ -556,12 +556,20 @@ fn retain_elements(
         obj.remove("elements");
         return;
     }
-    if let (Some(keep), Some(Value::Array(elements))) = (keep, obj.get_mut("elements")) {
-        elements.retain(|e| {
-            e.get("element_index")
-                .and_then(Value::as_u64)
-                .is_some_and(|i| keep.contains(&i))
-        });
+    if let Some(Value::Array(elements)) = obj.get_mut("elements") {
+        if let Some(keep) = keep {
+            elements.retain(|e| {
+                e.get("element_index")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|i| keep.contains(&i))
+            });
+        }
+        // Counts describe the delivered array, not the full snapshot before
+        // diff projection. Otherwise the typed SDK rejects valid since reads.
+        let returned = elements.len();
+        if obj.contains_key("returned_element_count") {
+            obj.insert("returned_element_count".into(), json!(returned));
+        }
     }
 }
 
@@ -1469,6 +1477,43 @@ mod tests {
             &mut s5,
         );
         assert_eq!(s5["since_status"], "other_window");
+    }
+
+    #[test]
+    fn element_diffs_keep_counts_valid_for_the_typed_sdk() {
+        for (i, format) in ["elements", "both"].into_iter().enumerate() {
+            let context = ctx(81900 + i as u64);
+            let mut previous = String::new();
+            for (step, (markdown, expected)) in [
+                (OLD.to_owned(), 2),
+                (OLD.to_owned(), 0),
+                (OLD.replace("\"a\"", "\"ab\""), 1),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let sid = format!("s{:08x}", 0xee000000 + i * 16 + step);
+                let (mut content, mut state) = payload(&sid, &markdown);
+                state["elements"] = json!([
+                    {"element_index":1,"role":"AXTextField","depth":1,"value":"ab"},
+                    {"element_index":2,"role":"AXButton","depth":1,"label":"Save"}
+                ]);
+                state["total_element_count"] = json!(4);
+                state["returned_element_count"] = json!(2);
+                state["filtered_element_count"] = json!(2);
+                let mut arguments = json!({"tree_format":format});
+                if !previous.is_empty() {
+                    arguments["since"] = json!(previous);
+                }
+                apply(&opts(arguments), &context, &mut content, &mut state);
+                assert_eq!(state["elements"].as_array().unwrap().len(), expected);
+                assert_eq!(state["returned_element_count"], expected);
+                assert_eq!(state["total_element_count"], 4);
+                assert_eq!(state["filtered_element_count"], 2);
+                cua_driver_contract::validate_success_output("get_window_state", state).unwrap();
+                previous = sid;
+            }
+        }
     }
 
     #[test]
