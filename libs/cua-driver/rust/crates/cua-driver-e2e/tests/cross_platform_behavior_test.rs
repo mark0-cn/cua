@@ -925,6 +925,7 @@ fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
             element_token: token,
         },
         delivery_mode: InputDeliveryMode::Background,
+        coordinate_space: None,
         session: None,
         button: None,
         count: None,

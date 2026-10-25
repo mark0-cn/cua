@@ -79,6 +79,14 @@ pub fn button_schema() -> Value {
     })
 }
 
+/// Explicit coordinate units for `click`; omission preserves screenshot pixels.
+pub fn click_coordinate_space_schema() -> Value {
+    json!({
+        "type":"string", "enum":["screenshot", "screen"], "default":"screenshot",
+        "description":"Units of x/y: screenshot (default) uses pixels of the target screenshot; screen uses native global coordinates from accessibility elements.frame (logical points on macOS). Screen requires a desktop target (scope=desktop, no pid/window_id), and cannot be combined with capture_id, from_zoom, or element_token. Bring the intended app to front and verify focus before a desktop click."
+    })
+}
+
 /// `scope` — window-local vs desktop-absolute coordinate frame for windowless
 /// pointer actions.
 pub fn scope_schema() -> Value {

@@ -2162,6 +2162,81 @@ class _UniffiFfiConverterTypeInputDeliveryMode(_UniffiConverterRustBuffer):
 
 
 
+class ClickCoordinateSpace(enum.Enum):
+    """
+    Units of pointer coordinates, independent of the capture's backing scale.
+"""
+
+    SCREENSHOT = 0
+    """
+    Pixels of the target's screenshot (the existing default).
+"""
+
+    SCREEN = 1
+    """
+    Native global screen coordinates, as returned by accessibility frames.
+    On macOS these are logical points; on Windows/X11 they are desktop pixels.
+"""
+
+
+
+class _UniffiFfiConverterTypeClickCoordinateSpace(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ClickCoordinateSpace.SCREENSHOT
+        if variant == 2:
+            return ClickCoordinateSpace.SCREEN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ClickCoordinateSpace.SCREENSHOT:
+            return
+        if value == ClickCoordinateSpace.SCREEN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ClickCoordinateSpace.SCREENSHOT:
+            buf.write_i32(1)
+        if value == ClickCoordinateSpace.SCREEN:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeClickCoordinateSpace(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeClickCoordinateSpace.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeClickCoordinateSpace.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeClickCoordinateSpace.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+
+
+
+
+
 class ClickButton(enum.Enum):
 
     LEFT = 0
@@ -2232,10 +2307,14 @@ class _UniffiFfiConverterOptionalTypeClickButton(_UniffiConverterRustBuffer):
 
 @dataclass
 class ClickInput:
-    def __init__(self, *, target:ActionTarget, position:ClickPosition, delivery_mode:InputDeliveryMode, session:typing.Optional[str], button:typing.Optional[ClickButton], count:typing.Optional[int]):
+    def __init__(self, *, target:ActionTarget, position:ClickPosition, delivery_mode:InputDeliveryMode, coordinate_space:typing.Optional[ClickCoordinateSpace] = _DEFAULT, session:typing.Optional[str], button:typing.Optional[ClickButton], count:typing.Optional[int]):
         self.target = target
         self.position = position
         self.delivery_mode = delivery_mode
+        if coordinate_space is _DEFAULT:
+            self.coordinate_space = None
+        else:
+            self.coordinate_space = coordinate_space
         self.session = session
         self.button = button
         self.count = count
@@ -2244,13 +2323,15 @@ class ClickInput:
 
 
     def __str__(self):
-        return "ClickInput(target={}, position={}, delivery_mode={}, session={}, button={}, count={})".format(self.target, self.position, self.delivery_mode, self.session, self.button, self.count)
+        return "ClickInput(target={}, position={}, delivery_mode={}, coordinate_space={}, session={}, button={}, count={})".format(self.target, self.position, self.delivery_mode, self.coordinate_space, self.session, self.button, self.count)
     def __eq__(self, other):
         if self.target != other.target:
             return False
         if self.position != other.position:
             return False
         if self.delivery_mode != other.delivery_mode:
+            return False
+        if self.coordinate_space != other.coordinate_space:
             return False
         if self.session != other.session:
             return False
@@ -2267,6 +2348,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
             target=_UniffiFfiConverterTypeActionTarget.read(buf),
             position=_UniffiFfiConverterTypeClickPosition.read(buf),
             delivery_mode=_UniffiFfiConverterTypeInputDeliveryMode.read(buf),
+            coordinate_space=_UniffiFfiConverterOptionalTypeClickCoordinateSpace.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
             button=_UniffiFfiConverterOptionalTypeClickButton.read(buf),
             count=_UniffiFfiConverterOptionalUInt32.read(buf),
@@ -2277,6 +2359,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionTarget.check_lower(value.target)
         _UniffiFfiConverterTypeClickPosition.check_lower(value.position)
         _UniffiFfiConverterTypeInputDeliveryMode.check_lower(value.delivery_mode)
+        _UniffiFfiConverterOptionalTypeClickCoordinateSpace.check_lower(value.coordinate_space)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeClickButton.check_lower(value.button)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.count)
@@ -2286,6 +2369,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionTarget.write(value.target, buf)
         _UniffiFfiConverterTypeClickPosition.write(value.position, buf)
         _UniffiFfiConverterTypeInputDeliveryMode.write(value.delivery_mode, buf)
+        _UniffiFfiConverterOptionalTypeClickCoordinateSpace.write(value.coordinate_space, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.count, buf)
@@ -8794,6 +8878,7 @@ __all__ = [
     "ActionTarget",
     "ClickPosition",
     "InputDeliveryMode",
+    "ClickCoordinateSpace",
     "ClickButton",
     "CursorEffectSetting",
     "CursorMotionStyle",

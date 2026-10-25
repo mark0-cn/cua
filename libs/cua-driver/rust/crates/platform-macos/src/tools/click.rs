@@ -335,6 +335,7 @@ fn def() -> &'static ToolDef {
                 "window_id":     { "type": "integer", "description": "Target window ID. Omit with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
+                "coordinate_space": cua_driver_core::tool_schema::click_coordinate_space_schema(),
                 "x":             { "type": "number",  "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target)." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
                 "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
@@ -385,6 +386,10 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let coordinate_space = match cua_driver_core::tool_args::click_coordinate_space(&args) {
+            Ok(space) => space,
+            Err(refusal) => return refusal,
+        };
 
         // ── Window-less screen-absolute branch (scope="desktop") ──────
         // x,y given with NO pid and NO window_id → the coordinates are TRUE
@@ -445,6 +450,8 @@ impl Tool for ClickTool {
                     Ok(point) => point,
                     Err(refusal) => return refusal,
                 }
+            } else if coordinate_space == cua_driver_contract::ClickCoordinateSpace::Screen {
+                (sx_shot, sy_shot)
             } else {
                 super::desktop_screenshot_point(sx_shot, sy_shot)
             };
@@ -499,7 +506,7 @@ impl Tool for ClickTool {
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute {button_label} at desktop-pixel \
+                    "✅ Sent screen-absolute {button_label} at {coordinate_space:?} coordinate \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
                      (desktop scope; not driver-verified)."
                 ))

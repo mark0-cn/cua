@@ -95,6 +95,41 @@ pub fn parse_legacy_click_input(
     parse_typed_input("click", Value::Object(projected))
 }
 
+/// Validate explicit units before any platform dispatch or capture consumption.
+pub fn click_coordinate_space(
+    args: &Value,
+) -> Result<cua_driver_contract::ClickCoordinateSpace, ToolResult> {
+    use cua_driver_contract::ClickCoordinateSpace;
+    let space = match args.get("coordinate_space") {
+        None => ClickCoordinateSpace::default(),
+        Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+            invalid_click_coordinates("coordinate_space must be screenshot or screen")
+        })?,
+    };
+    if space == ClickCoordinateSpace::Screen {
+        if args.get("scope").and_then(Value::as_str) != Some("desktop")
+            || ["pid", "window_id", "capture_id", "element_token"]
+                .iter()
+                .any(|field| args.get(field).is_some())
+            || args.get("from_zoom").and_then(Value::as_bool) == Some(true)
+            || !["x", "y"].iter().all(|field| {
+                args.get(field)
+                    .and_then(Value::as_f64)
+                    .is_some_and(f64::is_finite)
+            })
+        {
+            return Err(invalid_click_coordinates(
+                "screen coordinates require scope=desktop, finite x/y, and no pid/window_id, capture_id, element_token, or from_zoom",
+            ));
+        }
+    }
+    Ok(space)
+}
+
+fn invalid_click_coordinates(message: &str) -> ToolResult {
+    ToolResult::error(message).with_structured(json!({"code":"invalid_coordinate_space"}))
+}
+
 /// Remove transport-reserved arguments supplied by a public caller. Trusted
 /// ingress code calls this before injecting session or approval context, so a
 /// tool request cannot forge underscore-prefixed transport evidence.
@@ -551,6 +586,37 @@ impl ArgsExt for Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn click_coordinate_units_are_explicit_and_conflicts_refuse_before_dispatch() {
+        use cua_driver_contract::ClickCoordinateSpace;
+        assert_eq!(
+            click_coordinate_space(&json!({})).unwrap(),
+            ClickCoordinateSpace::Screenshot
+        );
+        let valid = json!({"scope":"desktop","coordinate_space":"screen","x":443.0,"y":16.5});
+        assert_eq!(
+            click_coordinate_space(&valid).unwrap(),
+            ClickCoordinateSpace::Screen
+        );
+        for extra in [
+            json!({"pid":42}),
+            json!({"window_id":73}),
+            json!({"scope":"window"}),
+            json!({"capture_id":"capture"}),
+            json!({"element_token":"s00000001:0"}),
+            json!({"from_zoom":true}),
+            json!({"coordinate_space":"points"}),
+            json!({"coordinate_space":null}),
+            json!({"x":null}),
+        ] {
+            let mut args = valid.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(click_coordinate_space(&args).is_err(), "{args}");
+        }
+    }
 
     #[test]
     fn require_i32_happy_path() {

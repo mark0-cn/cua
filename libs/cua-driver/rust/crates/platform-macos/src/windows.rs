@@ -455,7 +455,10 @@ pub fn window_properties(
         "window_id {window_id} belongs to pid {}, not {pid}",
         row.pid
     );
-    let frontmost = crate::apps::frontmost_pid();
+    // NSWorkspace can cache the old active app in embedded SDK hosts that do
+    // not run AppKit's main loop. Prefer the live WindowServer observation.
+    let frontmost = crate::input::skylight::front_process_matches(pid, window_id)
+        .or_else(|| crate::apps::frontmost_pid().map(|front| front == pid));
     let mut properties = cua_driver_contract::WindowProperties {
         title: (!row.title.is_empty()).then_some(row.title),
         bounds: Some(cua_driver_contract::WindowBounds {
@@ -465,7 +468,7 @@ pub fn window_properties(
             height: row.bounds.height,
         }),
         minimized: None,
-        focused: frontmost.filter(|front| *front != pid).map(|_| false),
+        focused: frontmost.filter(|front| !front),
     };
     // SAFETY: every retained AX element is released in this scope. No input or focus changes.
     unsafe {
@@ -473,7 +476,7 @@ pub fn window_properties(
         if !app.is_null() {
             AXUIElementSetMessagingTimeout(app, 0.25);
             crate::ax::enablement::ensure_chromium_ax_enabled(pid, app);
-            if frontmost == Some(pid) {
+            if frontmost == Some(true) {
                 if let Some(focused) = copy_element_attr(app, "AXFocusedWindow") {
                     properties.focused = ax_get_window_id(focused).map(|id| id == window_id);
                     CFRelease(focused as CFTypeRef);

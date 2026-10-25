@@ -799,6 +799,24 @@ pub enum InputDeliveryMode {
     Foreground,
 }
 
+/// Units of pointer coordinates, independent of the capture's backing scale.
+#[derive(
+    Debug, Default, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ClickCoordinateSpace {
+    /// Pixels of the target's screenshot (the existing default).
+    #[default]
+    Screenshot,
+    /// Native global screen coordinates, as returned by accessibility frames.
+    /// On macOS these are logical points; on Windows/X11 they are desktop pixels.
+    Screen,
+}
+
+fn click_coordinate_space_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({"type":"string","enum":["screenshot","screen"]})
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ClickPosition {
@@ -814,6 +832,11 @@ pub struct ClickInput {
     #[serde(flatten)]
     pub position: ClickPosition,
     pub delivery_mode: InputDeliveryMode,
+    /// Default screenshot. Screen uses native global accessibility coordinates
+    /// and requires a desktop target; it cannot be combined with capture_id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub coordinate_space: Option<ClickCoordinateSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -834,6 +857,11 @@ impl ClickInput {
 struct ClickWireInput {
     target: ActionTarget,
     delivery_mode: InputDeliveryMode,
+    /// Screenshot pixels (default), or native global screen coordinates from
+    /// accessibility frames. Screen requires a desktop target and no capture_id.
+    #[serde(default)]
+    #[schemars(schema_with = "click_coordinate_space_schema")]
+    coordinate_space: Option<ClickCoordinateSpace>,
     #[serde(default, deserialize_with = "present_click_field")]
     #[schemars(schema_with = "number_schema")]
     x: Option<f64>,
@@ -882,6 +910,7 @@ impl TryFrom<ClickWireInput> for ClickInput {
             target: wire.target,
             position,
             delivery_mode: wire.delivery_mode,
+            coordinate_space: wire.coordinate_space,
             session: wire.session,
             button: wire.button,
             count: wire.count,
@@ -903,6 +932,12 @@ impl JsonSchema for ClickInput {
 impl ToolInput for ClickInput {
     const TOOL_NAME: &'static str = "click";
     fn validate(&self) -> Result<(), String> {
+        if self.coordinate_space == Some(ClickCoordinateSpace::Screen)
+            && (!matches!(self.target, ActionTarget::Desktop { .. })
+                || !matches!(self.position, ClickPosition::Coordinates { .. }))
+        {
+            return Err("screen coordinates require a desktop target and x/y without capture_id or element_token".into());
+        }
         match &self.position {
             ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
                 return Err("click coordinates must be finite".into())
@@ -1228,11 +1263,21 @@ mod tests {
             },
             position: ClickPosition::Coordinates { x: 1.0, y: 2.0 },
             delivery_mode: InputDeliveryMode::Foreground,
+            coordinate_space: None,
             session: None,
             button: None,
             count: None,
         };
         assert!(input.validate().is_ok());
+        input.coordinate_space = Some(ClickCoordinateSpace::Screen);
+        assert!(input.validate().is_ok());
+        input.position = ClickPosition::CapturedCoordinates {
+            x: 443.0,
+            y: 16.5,
+            capture_id: "capture".into(),
+        };
+        assert!(input.validate().is_err());
+        input.coordinate_space = None;
         input.position = ClickPosition::Coordinates {
             x: f64::NAN,
             y: 2.0,

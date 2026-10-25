@@ -46,6 +46,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "coordinate_space": {
+            "description": "Screenshot pixels (default), or native global screen coordinates from\naccessibility frames. Screen requires a desktop target and no capture_id.",
+            "enum": [
+              "screenshot",
+              "screen"
+            ],
+            "type": "string"
+          },
           "count": {
             "maximum": 3,
             "minimum": 1,

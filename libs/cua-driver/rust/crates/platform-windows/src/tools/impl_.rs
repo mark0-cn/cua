@@ -3384,6 +3384,7 @@ impl Tool for ClickTool {
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "action":{"type":"string","description":"Accessibility action for an element_token target. \"expand\" opens the element through UIA ExpandCollapsePattern, or clicks the dropdown half of an MSAA split button. Omit for the default invoke."},
                     "capture_id":{"type":"string","minLength":1,"description":"Optional ID from get_window_state or get_desktop_state. When present, x and y are admitted against that exact capture and the ID is consumed before native dispatch."},
+                    "coordinate_space": cua_driver_core::tool_schema::click_coordinate_space_schema(),
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                     "button": cua_driver_core::tool_schema::button_schema(),
@@ -3402,6 +3403,9 @@ impl Tool for ClickTool {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use crate::uia::snapshot::SnapshotKind;
         use cua_driver_core::tool_args::ArgsExt;
+        if let Err(refusal) = cua_driver_core::tool_args::click_coordinate_space(&args) {
+            return refusal;
+        }
         let cursor_key = resolve_cursor_key(&args);
 
         // ── Window-less screen-absolute branch (desktop target) ───────────────

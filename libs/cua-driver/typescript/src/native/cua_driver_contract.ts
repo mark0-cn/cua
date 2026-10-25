@@ -1069,6 +1069,45 @@ const FfiConverterTypeInputDeliveryMode = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Units of pointer coordinates, independent of the capture's backing scale.
+ */
+export enum ClickCoordinateSpace {
+    /**
+     * Pixels of the target's screenshot (the existing default).
+     */
+    Screenshot,
+    /**
+     * Native global screen coordinates, as returned by accessibility frames.
+     * On macOS these are logical points; on Windows/X11 they are desktop pixels.
+     */
+    Screen
+}
+
+const FfiConverterTypeClickCoordinateSpace = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ClickCoordinateSpace;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ClickCoordinateSpace.Screenshot;
+                case 2: return ClickCoordinateSpace.Screen;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ClickCoordinateSpace.Screenshot: return ordinalConverter.write(1, into);
+                case ClickCoordinateSpace.Screen: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export enum ClickButton {
     Left,
     Right,
@@ -1105,6 +1144,11 @@ export type ClickInput = {
     target: ActionTarget,
     position: ClickPosition,
     deliveryMode: InputDeliveryMode,
+    /**
+     * Default screenshot. Screen uses native global accessibility coordinates
+     * and requires a desktop target; it cannot be combined with capture_id.
+     */
+    coordinateSpace?: ClickCoordinateSpace,
     session?: string,
     button?: ClickButton,
     count?: number
@@ -1115,6 +1159,7 @@ export type ClickInput = {
  */
 export const ClickInput = (() => {
     const defaults = () => ({
+        coordinateSpace: undefined,
     });
     const create = (() => {
         return uniffiCreateRecord<ClickInput, ReturnType<typeof defaults>>(defaults);
@@ -1134,6 +1179,7 @@ const FfiConverterTypeClickInput = (() => {
                 target: FfiConverterTypeActionTarget.read(from),
                 position: FfiConverterTypeClickPosition.read(from),
                 deliveryMode: FfiConverterTypeInputDeliveryMode.read(from),
+                coordinateSpace: FfiConverterOptionalTypeClickCoordinateSpace.read(from),
                 session: FfiConverterOptionalString.read(from),
                 button: FfiConverterOptionalTypeClickButton.read(from),
                 count: FfiConverterOptionalUInt32.read(from)
@@ -1143,6 +1189,7 @@ const FfiConverterTypeClickInput = (() => {
             FfiConverterTypeActionTarget.write(value.target, into);
             FfiConverterTypeClickPosition.write(value.position, into);
             FfiConverterTypeInputDeliveryMode.write(value.deliveryMode, into);
+            FfiConverterOptionalTypeClickCoordinateSpace.write(value.coordinateSpace, into);
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalTypeClickButton.write(value.button, into);
             FfiConverterOptionalUInt32.write(value.count, into);
@@ -1151,6 +1198,7 @@ const FfiConverterTypeClickInput = (() => {
             return FfiConverterTypeActionTarget.allocationSize(value.target) +
              FfiConverterTypeClickPosition.allocationSize(value.position) +
              FfiConverterTypeInputDeliveryMode.allocationSize(value.deliveryMode) +
+             FfiConverterOptionalTypeClickCoordinateSpace.allocationSize(value.coordinateSpace) +
              FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalTypeClickButton.allocationSize(value.button) +
              FfiConverterOptionalUInt32.allocationSize(value.count);
@@ -6728,6 +6776,9 @@ const FfiConverterOptionalTypeActionNextCall = new FfiConverterOptional(FfiConve
 // FfiConverter for number | undefined
 const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
 
+// FfiConverter for ClickCoordinateSpace | undefined
+const FfiConverterOptionalTypeClickCoordinateSpace = new FfiConverterOptional(FfiConverterTypeClickCoordinateSpace);
+
 // FfiConverter for ClickButton | undefined
 const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverterTypeClickButton);
 
@@ -6893,6 +6944,7 @@ export default Object.freeze({
     FfiConverterTypeBoundsExpectation,
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,
+    FfiConverterTypeClickCoordinateSpace,
     FfiConverterTypeClickInput,
     FfiConverterTypeClickPosition,
     FfiConverterTypeClipboardReadInput,

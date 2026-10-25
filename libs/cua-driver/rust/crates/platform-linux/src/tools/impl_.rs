@@ -6558,6 +6558,7 @@ impl Tool for ClickTool {
                     "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "capture_id":{"type":"string","description":"Optional one-shot binding to the exact PNG returned by get_window_state or get_desktop_state. When present, x/y are interpreted in that capture and admitted before native dispatch."},
+                    "coordinate_space": cua_driver_core::tool_schema::click_coordinate_space_schema(),
                     // Shape matches the shared button_schema() canon (string +
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
@@ -6577,6 +6578,10 @@ impl Tool for ClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
         let modifiers: Vec<String> = args.str_array("modifier");
+        let coordinate_space = match cua_driver_core::tool_args::click_coordinate_space(&args) {
+            Ok(space) => space,
+            Err(refusal) => return refusal,
+        };
 
         // ── Window-less screen-absolute branch (desktop target) ───────────────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
@@ -6630,6 +6635,9 @@ impl Tool for ClickTool {
                     Ok(point) => point,
                     Err(error) => return capture_admission_error(error),
                 }
+            } else if coordinate_space == cua_driver_contract::ClickCoordinateSpace::Screen {
+                let (x, y) = space.from_layout(input.x.round() as i32, input.y.round() as i32);
+                (f64::from(x), f64::from(y))
             } else {
                 (input.x, input.y)
             };

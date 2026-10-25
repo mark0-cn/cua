@@ -1,5 +1,16 @@
 # Cua Driver
 
+`click` accepts `coordinate_space: "screen"` for native global coordinates
+from accessibility `elements[].frame` (logical points on macOS, desktop pixels
+on Windows/X11, compositor layout coordinates on Wayland). Use a desktop target
+(`target: {kind: "desktop", display_id: "primary"}`, or legacy `scope: "desktop"`
+without pid/window_id) and `delivery_mode: "foreground"`. Bring the intended
+window to front and verify its focus before a global click, particularly on
+the application menu bar. `coordinate_space: "screenshot"` remains the default
+and preserves existing screenshot-pixel behavior. Screen coordinates cannot be
+combined with `capture_id`, `element_token`, or zoom coordinates. For double or
+right clicks use `click` with `count: 2` or `button: "right"`.
+
 Background computer-use driver for any agents. Speaks MCP over stdio; drives native macOS apps without stealing focus.
 
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern

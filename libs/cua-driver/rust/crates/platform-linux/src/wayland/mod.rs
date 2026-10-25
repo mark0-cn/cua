@@ -1402,6 +1402,13 @@ impl DesktopInputSpace {
             .map_or((x, y), |snapshot| snapshot.frame.to_layout(x, y))
     }
 
+    /// Desktop-frame point corresponding to native accessibility layout coordinates.
+    pub fn from_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        self.snapshot
+            .as_ref()
+            .map_or((x, y), |snapshot| snapshot.frame.from_layout(x, y))
+    }
+
     /// Layout coordinates of a desktop-frame point that input may target.
     /// On a multi-monitor frame a point in a gap or on an output in standby
     /// is refused rather than left for the compositor to move to another
